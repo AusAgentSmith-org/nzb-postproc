@@ -797,7 +797,7 @@ dependencies = [
 [[package]]
 name = "nzb-core"
 version = "0.1.1"
-source = "git+https://github.com/AusAgentSmith-org/nzb-core.git?tag=v0.1.1#eb3c62d6b947695d9720bf29fade9dc261654fc1"
+source = "git+https://github.com/AusAgentSmith-org/nzb-core.git?tag=v0.1.2#1c7a10d513963aca1026c27fd7ea0100cd6b0dea"
 dependencies = [
  "anyhow",
  "chrono",
@@ -817,7 +817,7 @@ dependencies = [
 [[package]]
 name = "nzb-nntp"
 version = "0.1.0"
-source = "git+https://github.com/AusAgentSmith/nzb-nntp.git?tag=v0.1.0#4e25c4238b028ed15ad1f98f8a98db3df1f2e324"
+source = "git+https://github.com/AusAgentSmith-org/nzb-nntp.git?tag=v0.1.1#6a10b81bc633964112d50d2fa3a31e666f10945b"
 dependencies = [
  "anyhow",
  "arc-swap",
