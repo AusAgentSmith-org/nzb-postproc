@@ -797,7 +797,7 @@ dependencies = [
 [[package]]
 name = "nzb-core"
 version = "0.1.0"
-source = "git+https://github.com/AusAgentSmith-org/nzb-core.git?tag=v0.1.0#971b3e3a85b1697710d7a37579ae02bcc2b5b912"
+source = "git+https://github.com/AusAgentSmith-org/nzb-core.git?tag=v0.1.0#39aa4628b75390792f90bd2c32c722a78fc74d25"
 dependencies = [
  "anyhow",
  "chrono",
