@@ -287,11 +287,18 @@ pub async fn run_pipeline(job_dir: &Path, config: &PostProcConfig) -> PostProcRe
     // ------------------------------------------------------------------
     // Stage 3: Extract
     // ------------------------------------------------------------------
-    if pipeline_ok {
+    // Attempt extraction even if verify/repair failed when only a few articles
+    // were missing — the failed articles may have been PAR2 files rather than
+    // data files, so the RAR archive could still be intact.
+    let should_extract = pipeline_ok || config.articles_failed <= 5;
+    if should_extract {
         let output_dir = config.output_dir.as_deref().unwrap_or(job_dir);
         let result = run_extract_stage(job_dir, output_dir).await;
         if result.status == StageStatus::Failed {
             pipeline_ok = false;
+        } else if result.status == StageStatus::Success {
+            // Extraction succeeded despite verify/repair failure — recover
+            pipeline_ok = true;
         }
         stages.push(result);
     }
