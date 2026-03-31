@@ -6,6 +6,10 @@ description = "Post-processing pipeline: PAR2 verify/repair, archive extraction"
 license = "MIT"
 repository = "https://github.com/AusAgentSmith-org/nzb-postproc"
 
+[features]
+default = []
+groups-db = ["nzb-core/groups-db"]
+
 [dependencies]
 nzb-core = { path = "/home/sprooty/Working/libs/nzb-core" }
 tokio = { version = "1", features = ["rt", "sync", "process"] }
