@@ -153,7 +153,7 @@ pub async fn extract_zip(zip_file: &Path, output_dir: &Path) -> anyhow::Result<U
     Ok(result)
 }
 
-fn find_unrar() -> Option<String> {
+pub fn find_unrar() -> Option<String> {
     for name in &["unrar", "unrar-free", "rar"] {
         if which_exists(name) {
             return Some(name.to_string());

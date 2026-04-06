@@ -57,6 +57,9 @@ pub struct PostProcConfig {
     /// When > 0, `par2 repair` is run directly (which verifies + repairs
     /// in a single pass), avoiding the redundant verify-then-repair double-scan.
     pub articles_failed: usize,
+    /// When true, the extract stage is skipped because direct unpack already
+    /// handled RAR extraction during the download phase.
+    pub skip_extract: bool,
 }
 
 impl Default for PostProcConfig {
@@ -65,6 +68,7 @@ impl Default for PostProcConfig {
             cleanup_after_extract: true,
             output_dir: None,
             articles_failed: 0,
+            skip_extract: false,
         }
     }
 }
@@ -291,7 +295,15 @@ pub async fn run_pipeline(job_dir: &Path, config: &PostProcConfig) -> PostProcRe
     // were missing — the failed articles may have been PAR2 files rather than
     // data files, so the RAR archive could still be intact.
     let should_extract = pipeline_ok || config.articles_failed <= 5;
-    if should_extract {
+    if config.skip_extract {
+        info!("Skipping extraction — completed by direct unpack");
+        stages.push(StageResult {
+            name: "Extract".to_string(),
+            status: StageStatus::Skipped,
+            message: Some("Skipped — completed by direct unpack".to_string()),
+            duration_secs: 0.0,
+        });
+    } else if should_extract {
         let output_dir = config.output_dir.as_deref().unwrap_or(job_dir);
         let result = run_extract_stage(job_dir, output_dir).await;
         if result.status == StageStatus::Failed {
@@ -592,6 +604,7 @@ mod tests {
             cleanup_after_extract: false,
             output_dir: None,
             articles_failed: 0,
+            skip_extract: false,
         };
         let result = run_pipeline(dir.path(), &config).await;
 
@@ -621,6 +634,7 @@ mod tests {
             cleanup_after_extract: false,
             output_dir: None,
             articles_failed: 0,
+            skip_extract: false,
         };
         let result = run_pipeline(dir.path(), &config).await;
         assert!(result.success);
@@ -649,6 +663,7 @@ mod tests {
             cleanup_after_extract: false,
             output_dir: None,
             articles_failed: 5,
+            skip_extract: false,
         };
         let result = run_pipeline(dir.path(), &config).await;
         assert!(result.success);
@@ -679,6 +694,7 @@ mod tests {
             cleanup_after_extract: false,
             output_dir: None,
             articles_failed: 3,
+            skip_extract: false,
         };
         let result = run_pipeline(dir.path(), &config).await;
 

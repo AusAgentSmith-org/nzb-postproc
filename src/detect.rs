@@ -7,6 +7,75 @@ use std::path::{Path, PathBuf};
 
 use walkdir::WalkDir;
 
+/// Parsed RAR volume information: set name and volume number.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RarVolumeInfo {
+    /// The base name of the RAR set (e.g. "movie" from "movie.part003.rar").
+    pub set_name: String,
+    /// Zero-based volume number. For new-style `.partNNN.rar`, this is NNN-1.
+    /// For old-style, `.rar` = 0, `.r00` = 1, `.r01` = 2, etc.
+    pub volume_number: u32,
+}
+
+/// Parse a filename to extract RAR set name and volume number.
+///
+/// Returns `None` if the file isn't a recognizable RAR volume.
+///
+/// Handles:
+///   - New-style: `"movie.part001.rar"` → `("movie", 0)`, `"movie.part002.rar"` → `("movie", 1)`
+///   - Old-style: `"movie.rar"` → `("movie", 0)`, `"movie.r00"` → `("movie", 1)`, `"movie.r01"` → `("movie", 2)`
+pub fn parse_rar_volume(filename: &str) -> Option<RarVolumeInfo> {
+    let name_lower = filename.to_lowercase();
+
+    // New-style: .partNNN.rar
+    if let Some(stem) = name_lower.strip_suffix(".rar") {
+        if let Some(dot_pos) = stem.rfind(".part") {
+            let part_num_str = &stem[dot_pos + 5..];
+            if !part_num_str.is_empty() && part_num_str.chars().all(|c| c.is_ascii_digit()) {
+                if let Ok(part_num) = part_num_str.parse::<u32>() {
+                    // Use the original filename's casing for set_name
+                    let set_name = &filename[..dot_pos];
+                    return Some(RarVolumeInfo {
+                        set_name: set_name.to_string(),
+                        volume_number: part_num.saturating_sub(1),
+                    });
+                }
+            }
+        }
+        // Plain .rar — first volume in old-style set
+        let set_name = &filename[..filename.len() - 4];
+        return Some(RarVolumeInfo {
+            set_name: set_name.to_string(),
+            volume_number: 0,
+        });
+    }
+
+    // Old-style continuation: .r00, .r01, ..., .s00, etc.
+    if name_lower.len() > 4 {
+        let last4 = &name_lower[name_lower.len() - 4..];
+        if last4.starts_with('.')
+            && last4.as_bytes()[1].is_ascii_lowercase()
+            && last4.as_bytes()[2].is_ascii_digit()
+            && last4.as_bytes()[3].is_ascii_digit()
+        {
+            let letter = last4.as_bytes()[1];
+            let tens = (last4.as_bytes()[2] - b'0') as u32;
+            let ones = (last4.as_bytes()[3] - b'0') as u32;
+            // .r00 = volume 1, .r01 = volume 2, ..., .r99 = volume 100
+            // .s00 = volume 101, .s01 = volume 102, etc.
+            let letter_offset = (letter - b'r') as u32 * 100;
+            let vol = letter_offset + tens * 10 + ones + 1;
+            let set_name = &filename[..filename.len() - 4];
+            return Some(RarVolumeInfo {
+                set_name: set_name.to_string(),
+                volume_number: vol,
+            });
+        }
+    }
+
+    None
+}
+
 /// The type of archive detected.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArchiveType {
@@ -461,5 +530,73 @@ mod tests {
             let name = path.file_name().unwrap().to_str().unwrap();
             assert!(!name.ends_with(".mkv"));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // RAR volume filename parser
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_parse_rar_volume_new_style() {
+        let v = parse_rar_volume("movie.part001.rar").unwrap();
+        assert_eq!(v.set_name, "movie");
+        assert_eq!(v.volume_number, 0);
+
+        let v = parse_rar_volume("movie.part002.rar").unwrap();
+        assert_eq!(v.set_name, "movie");
+        assert_eq!(v.volume_number, 1);
+
+        let v = parse_rar_volume("My.Movie.2024.part015.rar").unwrap();
+        assert_eq!(v.set_name, "My.Movie.2024");
+        assert_eq!(v.volume_number, 14);
+    }
+
+    #[test]
+    fn test_parse_rar_volume_old_style() {
+        let v = parse_rar_volume("archive.rar").unwrap();
+        assert_eq!(v.set_name, "archive");
+        assert_eq!(v.volume_number, 0);
+
+        let v = parse_rar_volume("archive.r00").unwrap();
+        assert_eq!(v.set_name, "archive");
+        assert_eq!(v.volume_number, 1);
+
+        let v = parse_rar_volume("archive.r01").unwrap();
+        assert_eq!(v.set_name, "archive");
+        assert_eq!(v.volume_number, 2);
+
+        let v = parse_rar_volume("archive.r99").unwrap();
+        assert_eq!(v.set_name, "archive");
+        assert_eq!(v.volume_number, 100);
+
+        let v = parse_rar_volume("archive.s00").unwrap();
+        assert_eq!(v.set_name, "archive");
+        assert_eq!(v.volume_number, 101);
+    }
+
+    #[test]
+    fn test_parse_rar_volume_non_rar() {
+        assert!(parse_rar_volume("movie.mkv").is_none());
+        assert!(parse_rar_volume("movie.par2").is_none());
+        assert!(parse_rar_volume("movie.7z").is_none());
+        assert!(parse_rar_volume("movie.zip").is_none());
+        assert!(parse_rar_volume("readme.txt").is_none());
+    }
+
+    #[test]
+    fn test_parse_rar_volume_case_insensitive() {
+        let v = parse_rar_volume("Movie.Part003.RAR").unwrap();
+        assert_eq!(v.set_name, "Movie");
+        assert_eq!(v.volume_number, 2);
+
+        let v = parse_rar_volume("ARCHIVE.R05").unwrap();
+        assert_eq!(v.set_name, "ARCHIVE");
+        assert_eq!(v.volume_number, 6);
+    }
+
+    #[test]
+    fn test_parse_rar_volume_preserves_original_set_name() {
+        let v = parse_rar_volume("My.Movie.2024.1080p.part001.rar").unwrap();
+        assert_eq!(v.set_name, "My.Movie.2024.1080p");
     }
 }

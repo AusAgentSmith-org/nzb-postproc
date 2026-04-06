@@ -11,7 +11,7 @@ default = []
 groups-db = ["nzb-core/groups-db"]
 
 [dependencies]
-nzb-core = { git = "https://github.com/AusAgentSmith-org/nzb-core.git", tag = "v0.2.0" }
+nzb-core = { git = "https://github.com/AusAgentSmith-org/nzb-core.git", tag = "v0.2.1" }
 tokio = { version = "1", features = ["rt", "sync", "process"] }
 tracing = "0.1"
 anyhow = "1"
