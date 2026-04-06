@@ -796,8 +796,9 @@ dependencies = [
 
 [[package]]
 name = "nzb-core"
-version = "0.2.0"
-source = "git+https://github.com/AusAgentSmith-org/nzb-core.git?tag=v0.2.1#717f37067903de78efd3e1d15de83e032038f420"
+version = "0.2.2"
+source = "sparse+https://repo.indexarr.net/api/packages/indexarr/cargo/"
+checksum = "31d95fc8cd565c9669ff9a7d819089d130fcf70e92791c80aeafa7a4d1bc1143"
 dependencies = [
  "anyhow",
  "chrono",
@@ -816,8 +817,9 @@ dependencies = [
 
 [[package]]
 name = "nzb-nntp"
-version = "0.2.0"
-source = "git+https://github.com/AusAgentSmith-org/nzb-nntp.git?tag=v0.2.0#6a8b24750f9dbd455cabb01812a72eb891bb81a1"
+version = "0.2.1"
+source = "sparse+https://repo.indexarr.net/api/packages/indexarr/cargo/"
+checksum = "e238b576725d1dd494418d107047e9e1f2177d3e132b50d4d57f9253b480d416"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -839,7 +841,7 @@ dependencies = [
 
 [[package]]
 name = "nzb-postproc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "nzb-core",

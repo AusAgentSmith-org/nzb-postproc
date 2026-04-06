@@ -1,6 +1,6 @@
 [package]
 name = "nzb-postproc"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 description = "Post-processing pipeline: PAR2 verify/repair, archive extraction"
 license = "MIT"
@@ -11,7 +11,7 @@ default = []
 groups-db = ["nzb-core/groups-db"]
 
 [dependencies]
-nzb-core = { git = "http://100.92.54.45:3002/indexarr/nzb-core.git", tag = "v0.2.1" }
+nzb-core = { version = "0.2.2", registry = "forgejo" }
 tokio = { version = "1", features = ["rt", "sync", "process"] }
 tracing = "0.1"
 anyhow = "1"
