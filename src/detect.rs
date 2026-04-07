@@ -31,15 +31,16 @@ pub fn parse_rar_volume(filename: &str) -> Option<RarVolumeInfo> {
     if let Some(stem) = name_lower.strip_suffix(".rar") {
         if let Some(dot_pos) = stem.rfind(".part") {
             let part_num_str = &stem[dot_pos + 5..];
-            if !part_num_str.is_empty() && part_num_str.chars().all(|c| c.is_ascii_digit()) {
-                if let Ok(part_num) = part_num_str.parse::<u32>() {
-                    // Use the original filename's casing for set_name
-                    let set_name = &filename[..dot_pos];
-                    return Some(RarVolumeInfo {
-                        set_name: set_name.to_string(),
-                        volume_number: part_num.saturating_sub(1),
-                    });
-                }
+            if !part_num_str.is_empty()
+                && part_num_str.chars().all(|c| c.is_ascii_digit())
+                && let Ok(part_num) = part_num_str.parse::<u32>()
+            {
+                // Use the original filename's casing for set_name
+                let set_name = &filename[..dot_pos];
+                return Some(RarVolumeInfo {
+                    set_name: set_name.to_string(),
+                    volume_number: part_num.saturating_sub(1),
+                });
             }
         }
         // Plain .rar — first volume in old-style set
