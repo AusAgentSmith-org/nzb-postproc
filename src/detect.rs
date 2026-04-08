@@ -221,7 +221,7 @@ pub fn find_archives(dir: &Path) -> Vec<(ArchiveType, PathBuf)> {
             None => continue,
         };
 
-        if name.ends_with(".7z") {
+        if name.ends_with(".7z") || name.ends_with(".7z.enc") {
             archives.push((ArchiveType::SevenZip, path.to_path_buf()));
         } else if is_split_7z_first_volume(&name) {
             // Split 7z: .7z.001 is the first volume — 7z handles the rest
@@ -316,6 +316,11 @@ fn is_cleanup_candidate(name: &str) -> bool {
 
     // Split 7z volumes: .7z.001, .7z.002, etc.
     if is_split_7z_volume(name) {
+        return true;
+    }
+
+    // Encrypted 7z archives: .7z.enc
+    if name.ends_with(".7z.enc") {
         return true;
     }
 

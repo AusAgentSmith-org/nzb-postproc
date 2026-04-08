@@ -76,6 +76,15 @@ pub async fn extract_rar(rar_file: &Path, output_dir: &Path) -> anyhow::Result<U
     })
 }
 
+/// Strings in 7z stderr/stdout that indicate a password-protected archive.
+const SEVENZ_PASSWORD_PATTERNS: &[&str] = &[
+    "Wrong password",
+    "Can not open encrypted archive",
+    "Enter password",
+    "ERROR: Data Error in encrypted file",
+    "password is incorrect",
+];
+
 /// Extract 7z archives by shelling out to the 7z binary.
 pub async fn extract_7z(archive_file: &Path, output_dir: &Path) -> anyhow::Result<UnpackResult> {
     let sevenz_bin =
@@ -96,9 +105,21 @@ pub async fn extract_7z(archive_file: &Path, output_dir: &Path) -> anyhow::Resul
         .await?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = format!("{stdout}\n{stderr}");
     let success = output.status.success();
 
     if !success {
+        let is_encrypted = SEVENZ_PASSWORD_PATTERNS
+            .iter()
+            .any(|p| combined.contains(p));
+        if is_encrypted {
+            warn!(
+                file = %archive_file.display(),
+                "7z extraction failed — archive is password-protected"
+            );
+            anyhow::bail!("archive is password-protected");
+        }
         warn!(
             file = %archive_file.display(),
             exit_code = ?output.status.code(),
