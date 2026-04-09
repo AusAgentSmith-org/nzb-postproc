@@ -494,7 +494,11 @@ async fn run_repair_stage(job_dir: &Path) -> StageResult {
     }
 }
 
-async fn run_extract_stage(job_dir: &Path, output_dir: &Path, password: Option<&str>) -> StageResult {
+async fn run_extract_stage(
+    job_dir: &Path,
+    output_dir: &Path,
+    password: Option<&str>,
+) -> StageResult {
     let start = Instant::now();
     let archives = find_archives(job_dir);
 
