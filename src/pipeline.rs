@@ -60,6 +60,8 @@ pub struct PostProcConfig {
     /// When true, the extract stage is skipped because direct unpack already
     /// handled RAR extraction during the download phase.
     pub skip_extract: bool,
+    /// Optional archive password (from NZB metadata or indexer API).
+    pub password: Option<String>,
 }
 
 impl Default for PostProcConfig {
@@ -69,6 +71,7 @@ impl Default for PostProcConfig {
             output_dir: None,
             articles_failed: 0,
             skip_extract: false,
+            password: None,
         }
     }
 }
@@ -312,7 +315,7 @@ pub async fn run_pipeline(job_dir: &Path, config: &PostProcConfig) -> PostProcRe
         });
     } else if should_extract {
         let output_dir = config.output_dir.as_deref().unwrap_or(job_dir);
-        let result = run_extract_stage(job_dir, output_dir).await;
+        let result = run_extract_stage(job_dir, output_dir, config.password.as_deref()).await;
         if result.status == StageStatus::Failed {
             pipeline_ok = false;
         } else if result.status == StageStatus::Success {
@@ -491,7 +494,7 @@ async fn run_repair_stage(job_dir: &Path) -> StageResult {
     }
 }
 
-async fn run_extract_stage(job_dir: &Path, output_dir: &Path) -> StageResult {
+async fn run_extract_stage(job_dir: &Path, output_dir: &Path, password: Option<&str>) -> StageResult {
     let start = Instant::now();
     let archives = find_archives(job_dir);
 
@@ -512,8 +515,8 @@ async fn run_extract_stage(job_dir: &Path, output_dir: &Path) -> StageResult {
         info!(kind = %archive_type, file = %path.display(), "Extracting archive");
 
         let result = match archive_type {
-            ArchiveType::Rar => extract_rar(path, output_dir).await,
-            ArchiveType::SevenZip => extract_7z(path, output_dir).await,
+            ArchiveType::Rar => extract_rar(path, output_dir, password).await,
+            ArchiveType::SevenZip => extract_7z(path, output_dir, password).await,
             ArchiveType::Zip => extract_zip(path, output_dir).await,
         };
 
@@ -696,9 +699,7 @@ mod tests {
         let dir = make_test_dir(&[]);
         let config = PostProcConfig {
             cleanup_after_extract: false,
-            output_dir: None,
-            articles_failed: 0,
-            skip_extract: false,
+            ..Default::default()
         };
         let result = run_pipeline(dir.path(), &config).await;
 
@@ -726,9 +727,7 @@ mod tests {
         let dir = make_test_dir(&["movie.par2", "movie.vol00+01.par2", "movie.mkv"]);
         let config = PostProcConfig {
             cleanup_after_extract: false,
-            output_dir: None,
-            articles_failed: 0,
-            skip_extract: false,
+            ..Default::default()
         };
         let result = run_pipeline(dir.path(), &config).await;
         assert!(result.success);
@@ -755,9 +754,8 @@ mod tests {
         let dir = make_test_dir(&["movie.mkv"]);
         let config = PostProcConfig {
             cleanup_after_extract: false,
-            output_dir: None,
             articles_failed: 5,
-            skip_extract: false,
+            ..Default::default()
         };
         let result = run_pipeline(dir.path(), &config).await;
         assert!(result.success);
@@ -786,9 +784,8 @@ mod tests {
         let dir = make_test_dir(&["movie.par2", "movie.vol00+01.par2", "movie.mkv"]);
         let config = PostProcConfig {
             cleanup_after_extract: false,
-            output_dir: None,
             articles_failed: 3,
-            skip_extract: false,
+            ..Default::default()
         };
         let result = run_pipeline(dir.path(), &config).await;
 

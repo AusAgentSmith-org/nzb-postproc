@@ -19,7 +19,14 @@ pub struct UnpackResult {
 }
 
 /// Extract RAR archives in a directory.
-pub async fn extract_rar(rar_file: &Path, output_dir: &Path) -> anyhow::Result<UnpackResult> {
+///
+/// If `password` is `Some`, it is passed to the extractor (`-p<pw>` for unrar,
+/// `-p<pw>` for 7z). When `None`, `-p-` is used to suppress password prompts.
+pub async fn extract_rar(
+    rar_file: &Path,
+    output_dir: &Path,
+    password: Option<&str>,
+) -> anyhow::Result<UnpackResult> {
     // Try unrar first, fall back to 7z which also handles RAR files
     let (bin, use_7z) = if let Some(unrar) = find_unrar() {
         (unrar, false)
@@ -33,23 +40,35 @@ pub async fn extract_rar(rar_file: &Path, output_dir: &Path) -> anyhow::Result<U
 
     std::fs::create_dir_all(output_dir)?;
 
+    let pw_flag = match password {
+        Some(pw) => format!("-p{pw}"),
+        None => "-p-".to_string(), // don't prompt, fail on encrypted
+    };
+
     let output = if use_7z {
-        // 7z uses: 7z x -y -o<dir> <file>
+        // 7z uses: 7z x -y -p<pw> -o<dir> <file>
         Command::new(&bin)
             .arg("x")
             .arg("-y")
+            .arg(&pw_flag)
             .arg(format!("-o{}", output_dir.display()))
             .arg(rar_file)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await?
     } else {
-        // unrar uses: unrar x -o+ -y <file> <dir>
+        // unrar uses: unrar x -o+ -y -p<pw> -ai -idp <file> <dir>
+        // -ai  = ignore file attributes
+        // -idp = disable progress indicator (cleaner output for non-interactive use)
         Command::new(&bin)
             .args(["x", "-o+", "-y"])
+            .arg(&pw_flag)
+            .args(["-ai", "-idp"])
             .arg(rar_file)
             .arg(output_dir)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
@@ -58,9 +77,21 @@ pub async fn extract_rar(rar_file: &Path, output_dir: &Path) -> anyhow::Result<U
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = format!("{stdout}\n{stderr}");
     let success = output.status.success();
 
     if !success {
+        // Detect password-protected archives (unrar exit code 255 + password prompt)
+        let is_encrypted = combined.contains("Enter password")
+            || combined.contains("password is incorrect")
+            || combined.contains("Encrypted file");
+        if is_encrypted {
+            warn!(
+                file = %rar_file.display(),
+                "RAR extraction failed — archive is password-protected"
+            );
+            anyhow::bail!("archive is password-protected");
+        }
         warn!(
             file = %rar_file.display(),
             exit_code = ?output.status.code(),
@@ -86,7 +117,11 @@ const SEVENZ_PASSWORD_PATTERNS: &[&str] = &[
 ];
 
 /// Extract 7z archives by shelling out to the 7z binary.
-pub async fn extract_7z(archive_file: &Path, output_dir: &Path) -> anyhow::Result<UnpackResult> {
+pub async fn extract_7z(
+    archive_file: &Path,
+    output_dir: &Path,
+    password: Option<&str>,
+) -> anyhow::Result<UnpackResult> {
     let sevenz_bin =
         find_7z().ok_or_else(|| anyhow::anyhow!("7z/7zz/7za binary not found on PATH"))?;
 
@@ -94,11 +129,18 @@ pub async fn extract_7z(archive_file: &Path, output_dir: &Path) -> anyhow::Resul
 
     std::fs::create_dir_all(output_dir)?;
 
+    let pw_flag = match password {
+        Some(pw) => format!("-p{pw}"),
+        None => "-p-".to_string(),
+    };
+
     let output = Command::new(&sevenz_bin)
         .arg("x")
         .arg("-y") // assume yes on all queries
+        .arg(&pw_flag)
         .arg(format!("-o{}", output_dir.display()))
         .arg(archive_file)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
