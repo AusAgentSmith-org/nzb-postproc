@@ -411,24 +411,24 @@ fn rename_to_par2_names(file_set: &rust_par2::Par2FileSet, dir: &Path) {
             Err(_) => continue,
         };
 
-        if let Some(&par2_name) = expected.get(&hash) {
-            if current_name != par2_name {
-                let new_path = dir.join(par2_name);
-                if !new_path.exists() {
-                    if let Err(e) = std::fs::rename(&path, &new_path) {
-                        warn!(
-                            from = %current_name,
-                            to = %par2_name,
-                            "Failed to rename file to PAR2 expected name: {e}"
-                        );
-                    } else {
-                        renamed += 1;
-                        debug!(
-                            from = %current_name,
-                            to = %par2_name,
-                            "Renamed file to match PAR2 metadata"
-                        );
-                    }
+        if let Some(&par2_name) = expected.get(&hash)
+            && current_name != par2_name
+        {
+            let new_path = dir.join(par2_name);
+            if !new_path.exists() {
+                if let Err(e) = std::fs::rename(&path, &new_path) {
+                    warn!(
+                        from = %current_name,
+                        to = %par2_name,
+                        "Failed to rename file to PAR2 expected name: {e}"
+                    );
+                } else {
+                    renamed += 1;
+                    debug!(
+                        from = %current_name,
+                        to = %par2_name,
+                        "Renamed file to match PAR2 metadata"
+                    );
                 }
             }
         }
@@ -812,10 +812,7 @@ mod tests {
 
     /// Helper to build a Par2FileSet with given filename→content mappings.
     /// Computes hash_16k by writing content to temp files and using rust_par2.
-    fn make_par2_file_set(
-        tmp: &Path,
-        files: &[(&str, &[u8])],
-    ) -> rust_par2::Par2FileSet {
+    fn make_par2_file_set(tmp: &Path, files: &[(&str, &[u8])]) -> rust_par2::Par2FileSet {
         use rust_par2::{Par2File, Par2FileSet};
         let mut map = std::collections::HashMap::new();
         for (i, (name, content)) in files.iter().enumerate() {
@@ -860,7 +857,10 @@ mod tests {
         // PAR2 expects obfuscated names with the same content
         let file_set = make_par2_file_set(
             dir.path(),
-            &[("xY7kQ3.part01.rar", content_a), ("xY7kQ3.part02.rar", content_b)],
+            &[
+                ("xY7kQ3.part01.rar", content_a),
+                ("xY7kQ3.part02.rar", content_b),
+            ],
         );
 
         rename_to_par2_names(&file_set, dir.path());
