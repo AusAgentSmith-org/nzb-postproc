@@ -120,6 +120,13 @@ pub async fn run_pipeline(job_dir: &Path, config: &PostProcConfig) -> PostProcRe
 
         match rust_par2::parse(&index_par2) {
             Ok(file_set) => {
+                // PAR2-guided deobfuscation: if files on disk don't match
+                // PAR2 expected names (common with obfuscated posts where
+                // NZB subjects have readable names but PAR2 references
+                // the original obfuscated filenames), rename them using
+                // MD5-16k hash matching before verification runs.
+                rename_to_par2_names(&file_set, job_dir);
+
                 // Run verify (and repair if needed) in a single spawn_blocking call.
                 // This avoids two problems:
                 //   1. CPU-intensive verify/repair doesn't block the async runtime
@@ -345,6 +352,93 @@ pub async fn run_pipeline(job_dir: &Path, config: &PostProcConfig) -> PostProcRe
         success: pipeline_ok,
         stages,
         error,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// PAR2-guided deobfuscation
+// ---------------------------------------------------------------------------
+
+/// Rename files on disk to match PAR2 expected filenames.
+///
+/// Obfuscated Usenet posts often have readable names in NZB subjects but the
+/// actual PAR2 metadata references the original obfuscated filenames. This
+/// causes PAR2 verify to report all files as "missing" even though they exist.
+///
+/// This function matches files by MD5 hash of their first 16 KiB (which PAR2
+/// stores for each file) and renames them to what PAR2 expects. This is the
+/// same approach used by SABnzbd's `decode_par2()`.
+fn rename_to_par2_names(file_set: &rust_par2::Par2FileSet, dir: &Path) {
+    // Build a map of expected hash_16k → par2 filename
+    let mut expected: std::collections::HashMap<[u8; 16], &str> = std::collections::HashMap::new();
+    for par2_file in file_set.files.values() {
+        expected.insert(par2_file.hash_16k, &par2_file.filename);
+    }
+
+    // Check if any PAR2-expected files are already present — if so, no renaming needed
+    let any_match = file_set
+        .files
+        .values()
+        .any(|f| dir.join(&f.filename).exists());
+    if any_match {
+        return;
+    }
+
+    // Scan all files on disk and try to match by hash_16k
+    let entries: Vec<_> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return,
+    };
+
+    let mut renamed = 0u32;
+    for entry in &entries {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let current_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        // Skip PAR2 files themselves — they don't need renaming
+        if current_name.to_lowercase().ends_with(".par2") {
+            continue;
+        }
+
+        let hash = match rust_par2::compute_hash_16k(&path) {
+            Ok(h) => h,
+            Err(_) => continue,
+        };
+
+        if let Some(&par2_name) = expected.get(&hash) {
+            if current_name != par2_name {
+                let new_path = dir.join(par2_name);
+                if !new_path.exists() {
+                    if let Err(e) = std::fs::rename(&path, &new_path) {
+                        warn!(
+                            from = %current_name,
+                            to = %par2_name,
+                            "Failed to rename file to PAR2 expected name: {e}"
+                        );
+                    } else {
+                        renamed += 1;
+                        debug!(
+                            from = %current_name,
+                            to = %par2_name,
+                            "Renamed file to match PAR2 metadata"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    if renamed > 0 {
+        info!(
+            renamed,
+            "PAR2-guided deobfuscation: renamed files to match PAR2 expected names"
+        );
     }
 }
 
@@ -710,5 +804,138 @@ mod tests {
             stage_names.contains(&"Repair"),
             "Should have Repair stage when articles_failed > 0, got: {stage_names:?}"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // PAR2-guided deobfuscation tests
+    // -----------------------------------------------------------------------
+
+    /// Helper to build a Par2FileSet with given filename→content mappings.
+    /// Computes hash_16k by writing content to temp files and using rust_par2.
+    fn make_par2_file_set(
+        tmp: &Path,
+        files: &[(&str, &[u8])],
+    ) -> rust_par2::Par2FileSet {
+        use rust_par2::{Par2File, Par2FileSet};
+        let mut map = std::collections::HashMap::new();
+        for (i, (name, content)) in files.iter().enumerate() {
+            // Write to temp file so we can use compute_hash_16k
+            let tmp_path = tmp.join(format!("_par2_tmp_{i}"));
+            fs::write(&tmp_path, content).unwrap();
+            let hash_16k = rust_par2::compute_hash_16k(&tmp_path).unwrap();
+            let _ = fs::remove_file(&tmp_path);
+
+            let file_id = [i as u8; 16];
+            map.insert(
+                file_id,
+                Par2File {
+                    file_id,
+                    hash: [0u8; 16],
+                    hash_16k,
+                    size: content.len() as u64,
+                    filename: name.to_string(),
+                    slices: vec![],
+                },
+            );
+        }
+        Par2FileSet {
+            recovery_set_id: [0u8; 16],
+            slice_size: 16384,
+            files: map,
+            recovery_block_count: 0,
+            creator: None,
+        }
+    }
+
+    #[test]
+    fn test_rename_to_par2_names_renames_mismatched() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Write files with "readable" names
+        let content_a = b"AAAA test data for part01";
+        let content_b = b"BBBB test data for part02";
+        fs::write(dir.path().join("Movie.Name.part01.rar"), content_a).unwrap();
+        fs::write(dir.path().join("Movie.Name.part02.rar"), content_b).unwrap();
+
+        // PAR2 expects obfuscated names with the same content
+        let file_set = make_par2_file_set(
+            dir.path(),
+            &[("xY7kQ3.part01.rar", content_a), ("xY7kQ3.part02.rar", content_b)],
+        );
+
+        rename_to_par2_names(&file_set, dir.path());
+
+        // Files should be renamed to PAR2 expected names
+        assert!(
+            dir.path().join("xY7kQ3.part01.rar").exists(),
+            "part01 should be renamed to obfuscated name"
+        );
+        assert!(
+            dir.path().join("xY7kQ3.part02.rar").exists(),
+            "part02 should be renamed to obfuscated name"
+        );
+        assert!(
+            !dir.path().join("Movie.Name.part01.rar").exists(),
+            "old readable name should no longer exist"
+        );
+        assert!(
+            !dir.path().join("Movie.Name.part02.rar").exists(),
+            "old readable name should no longer exist"
+        );
+    }
+
+    #[test]
+    fn test_rename_to_par2_names_skips_when_already_correct() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Files already have the PAR2-expected names
+        let content = b"test data already correct";
+        fs::write(dir.path().join("xY7kQ3.part01.rar"), content).unwrap();
+
+        let file_set = make_par2_file_set(dir.path(), &[("xY7kQ3.part01.rar", content)]);
+
+        rename_to_par2_names(&file_set, dir.path());
+
+        // File should still exist with same name (no rename needed)
+        assert!(dir.path().join("xY7kQ3.part01.rar").exists());
+    }
+
+    #[test]
+    fn test_rename_to_par2_names_skips_par2_files() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // PAR2 files should not be renamed even if hash matches
+        let content = b"par2 file content";
+        fs::write(dir.path().join("Movie.Name.par2"), content).unwrap();
+        fs::write(dir.path().join("Movie.Name.part01.rar"), b"rar data").unwrap();
+
+        let file_set = make_par2_file_set(dir.path(), &[("obfuscated.par2", content)]);
+
+        rename_to_par2_names(&file_set, dir.path());
+
+        // PAR2 file should NOT be renamed
+        assert!(
+            dir.path().join("Movie.Name.par2").exists(),
+            "PAR2 files should be skipped"
+        );
+    }
+
+    #[test]
+    fn test_rename_to_par2_names_no_match() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // File content doesn't match any PAR2 entry
+        fs::write(dir.path().join("Movie.Name.part01.rar"), b"unrelated data").unwrap();
+
+        let file_set = make_par2_file_set(
+            dir.path(),
+            &[("xY7kQ3.part01.rar", b"different data" as &[u8])],
+        );
+
+        rename_to_par2_names(&file_set, dir.path());
+
+        // File should remain with original name (no hash match)
+        assert!(dir.path().join("Movie.Name.part01.rar").exists());
+        assert!(!dir.path().join("xY7kQ3.part01.rar").exists());
     }
 }
