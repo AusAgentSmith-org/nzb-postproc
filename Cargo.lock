@@ -796,9 +796,9 @@ dependencies = [
 
 [[package]]
 name = "nzb-core"
-version = "0.2.4"
+version = "0.2.8"
 source = "sparse+https://repo.indexarr.net/api/packages/indexarr/cargo/"
-checksum = "52589c0af44a709b928af2cdb7aa592c012ed12446951eb13a7cca1a573554e8"
+checksum = "88092c57409ff396339456225eb171e812388706eb25ea9c44e28fec02c5f178"
 dependencies = [
  "anyhow",
  "chrono",
@@ -817,9 +817,9 @@ dependencies = [
 
 [[package]]
 name = "nzb-nntp"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f61944290dd3718fb9c1a4c4e833c18f84c59d1b012b2b855a18364fdcdfab73"
+version = "0.2.8"
+source = "sparse+https://repo.indexarr.net/api/packages/indexarr/cargo/"
+checksum = "a9212c9ddacb61298a69ea6458d27350b8325ad8dfb26a3b197d2b22207200af"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -842,7 +842,7 @@ dependencies = [
 
 [[package]]
 name = "nzb-postproc"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "nzb-core",
