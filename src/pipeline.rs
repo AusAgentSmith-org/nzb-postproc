@@ -315,6 +315,9 @@ pub async fn run_pipeline(job_dir: &Path, config: &PostProcConfig) -> PostProcRe
         });
     } else if should_extract {
         let output_dir = config.output_dir.as_deref().unwrap_or(job_dir);
+        if !par2_files.is_empty() {
+            rename_from_index_par2_for_extract(job_dir, &par2_files);
+        }
         let result = run_extract_stage(job_dir, output_dir, config.password.as_deref()).await;
         if result.status == StageStatus::Failed {
             pipeline_ok = false;
@@ -442,6 +445,23 @@ fn rename_to_par2_names(file_set: &rust_par2::Par2FileSet, dir: &Path) {
             renamed,
             "PAR2-guided deobfuscation: renamed files to match PAR2 expected names"
         );
+    }
+}
+
+fn rename_from_index_par2_for_extract(job_dir: &Path, par2_files: &[PathBuf]) {
+    let Some(index_par2) = par2_files.first() else {
+        return;
+    };
+
+    match rust_par2::parse(index_par2) {
+        Ok(file_set) => rename_to_par2_names(&file_set, job_dir),
+        Err(e) => {
+            debug!(
+                file = %index_par2.display(),
+                error = %e,
+                "Skipping PAR2-guided rename before extract because the index PAR2 could not be parsed"
+            );
+        }
     }
 }
 
@@ -615,6 +635,23 @@ mod tests {
             fs::write(&path, b"").unwrap();
         }
         dir
+    }
+
+    fn copy_fixture_dir(name: &str) -> tempfile::TempDir {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name);
+        let dst = tempfile::tempdir().unwrap();
+
+        for entry in fs::read_dir(&src).unwrap() {
+            let entry = entry.unwrap();
+            let from = entry.path();
+            let to = dst.path().join(entry.file_name());
+            fs::copy(&from, &to).unwrap();
+        }
+
+        dst
     }
 
     #[test]
@@ -839,6 +876,7 @@ mod tests {
         Par2FileSet {
             recovery_set_id: [0u8; 16],
             slice_size: 16384,
+            file_order: map.keys().copied().collect(),
             files: map,
             recovery_block_count: 0,
             creator: None,
@@ -938,5 +976,38 @@ mod tests {
         // File should remain with original name (no hash match)
         assert!(dir.path().join("Movie.Name.part01.rar").exists());
         assert!(!dir.path().join("xY7kQ3.part01.rar").exists());
+    }
+
+    #[tokio::test]
+    async fn test_pipeline_renames_obfuscated_zip_using_real_par2_fixture() {
+        let dir = copy_fixture_dir("obfuscated_zip_par2");
+        fs::rename(
+            dir.path().join("release.zip"),
+            dir.path().join("obfuscated.29"),
+        )
+        .unwrap();
+
+        let output = tempfile::tempdir().unwrap();
+        let config = PostProcConfig {
+            cleanup_after_extract: false,
+            output_dir: Some(output.path().to_path_buf()),
+            articles_failed: 0,
+            ..Default::default()
+        };
+
+        let result = run_pipeline(dir.path(), &config).await;
+        assert!(result.success, "pipeline should succeed: {result:?}");
+
+        let verify_stage = result.stages.iter().find(|s| s.name == "Verify").unwrap();
+        assert_eq!(verify_stage.status, StageStatus::Skipped);
+
+        let extract_stage = result.stages.iter().find(|s| s.name == "Extract").unwrap();
+        assert_eq!(extract_stage.status, StageStatus::Success);
+        assert!(
+            output.path().join("payload.txt").exists(),
+            "obfuscated archive should be renamed and extracted via PAR2 metadata"
+        );
+        assert!(dir.path().join("release.zip").exists());
+        assert!(!dir.path().join("obfuscated.29").exists());
     }
 }
