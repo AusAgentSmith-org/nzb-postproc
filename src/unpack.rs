@@ -18,6 +18,68 @@ pub struct UnpackResult {
     pub output: String,
 }
 
+fn unrar_password_flag(password: Option<&str>) -> String {
+    match password {
+        Some(pw) => format!("-p{pw}"),
+        None => "-p-".to_string(),
+    }
+}
+
+fn sevenz_password_arg(password: Option<&str>) -> Option<String> {
+    password.map(|pw| format!("-p{pw}"))
+}
+
+fn rar_extract_args_with_7z(
+    rar_file: &Path,
+    output_dir: &Path,
+    password: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "x".to_string(),
+        "-y".to_string(),
+        format!("-o{}", output_dir.display()),
+        rar_file.display().to_string(),
+    ];
+    if let Some(flag) = sevenz_password_arg(password) {
+        args.insert(2, flag);
+    }
+    args
+}
+
+fn rar_extract_args_with_unrar(
+    rar_file: &Path,
+    output_dir: &Path,
+    password: Option<&str>,
+) -> Vec<String> {
+    vec![
+        "x".to_string(),
+        "-o+".to_string(),
+        "-y".to_string(),
+        unrar_password_flag(password),
+        "-ai".to_string(),
+        "-idp".to_string(),
+        rar_file.display().to_string(),
+        output_dir.display().to_string(),
+    ]
+}
+
+fn sevenz_extract_args(
+    archive_file: &Path,
+    output_dir: &Path,
+    password: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "x".to_string(),
+        "-y".to_string(),
+        format!("-o{}", output_dir.display()),
+        archive_file.display().to_string(),
+    ];
+    if let Some(flag) = sevenz_password_arg(password) {
+        args.insert(2, flag);
+    }
+    args
+}
+
 /// Extract RAR archives in a directory.
 ///
 /// If `password` is `Some`, it is passed to the extractor (`-p<pw>` for unrar,
@@ -40,34 +102,20 @@ pub async fn extract_rar(
 
     std::fs::create_dir_all(output_dir)?;
 
-    let pw_flag = match password {
-        Some(pw) => format!("-p{pw}"),
-        None => "-p-".to_string(), // don't prompt, fail on encrypted
-    };
-
     let output = if use_7z {
-        // 7z uses: 7z x -y -p<pw> -o<dir> <file>
+        // Do not pass `-p-` to 7z when no password is set. p7zip's built-in
+        // RAR handler treats it like a passworded archive hint and fails on
+        // valid multi-volume RAR sets.
         Command::new(&bin)
-            .arg("x")
-            .arg("-y")
-            .arg(&pw_flag)
-            .arg(format!("-o{}", output_dir.display()))
-            .arg(rar_file)
+            .args(rar_extract_args_with_7z(rar_file, output_dir, password))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .output()
             .await?
     } else {
-        // unrar uses: unrar x -o+ -y -p<pw> -ai -idp <file> <dir>
-        // -ai  = ignore file attributes
-        // -idp = disable progress indicator (cleaner output for non-interactive use)
         Command::new(&bin)
-            .args(["x", "-o+", "-y"])
-            .arg(&pw_flag)
-            .args(["-ai", "-idp"])
-            .arg(rar_file)
-            .arg(output_dir)
+            .args(rar_extract_args_with_unrar(rar_file, output_dir, password))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -129,17 +177,8 @@ pub async fn extract_7z(
 
     std::fs::create_dir_all(output_dir)?;
 
-    let pw_flag = match password {
-        Some(pw) => format!("-p{pw}"),
-        None => "-p-".to_string(),
-    };
-
     let output = Command::new(&sevenz_bin)
-        .arg("x")
-        .arg("-y") // assume yes on all queries
-        .arg(&pw_flag)
-        .arg(format!("-o{}", output_dir.display()))
-        .arg(archive_file)
+        .args(sevenz_extract_args(archive_file, output_dir, password))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -293,5 +332,38 @@ mod tests {
         };
         assert!(result.success);
         assert_eq!(result.files_extracted.len(), 1);
+    }
+
+    #[test]
+    fn sevenz_password_arg_is_omitted_without_password() {
+        assert_eq!(sevenz_password_arg(None), None);
+        assert_eq!(
+            sevenz_password_arg(Some("secret")).as_deref(),
+            Some("-psecret")
+        );
+    }
+
+    #[test]
+    fn rar_extract_args_keep_dash_password_only_for_unrar() {
+        let rar = Path::new("/tmp/test.rar");
+        let out = Path::new("/tmp/out");
+
+        let sevenz_args = rar_extract_args_with_7z(rar, out, None);
+        assert!(!sevenz_args.iter().any(|arg| arg == "-p-"));
+
+        let unrar_args = rar_extract_args_with_unrar(rar, out, None);
+        assert!(unrar_args.iter().any(|arg| arg == "-p-"));
+    }
+
+    #[test]
+    fn sevenz_extract_args_do_not_include_dash_password_without_password() {
+        let archive = Path::new("/tmp/test.7z");
+        let out = Path::new("/tmp/out");
+
+        let args = sevenz_extract_args(archive, out, None);
+        assert!(!args.iter().any(|arg| arg == "-p-"));
+
+        let args = sevenz_extract_args(archive, out, Some("secret"));
+        assert!(args.iter().any(|arg| arg == "-psecret"));
     }
 }
